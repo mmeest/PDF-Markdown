@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="et">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Markdown ? Live Preview ? PDF (GitHub README stiil)</title>
+
+  <!-- Marked (Markdown parser) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- DOMPurify (sanitize HTML) -->
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@2.4.0/dist/purify.min.js"></script>
+  <!-- highlight.js for code highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/github.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- GitHub Markdown CSS for authentic look -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5.2.0/github-markdown.min.css">
+  <!-- html2pdf (jsPDF + html2canvas) -->
+  <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+
+  <style>
+    :root{
+      --header-height: 56px;
+    }
+    html,body{
+      height:100%;
+      margin:0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: #f6f8fa;
+    }
+    header {
+      height: var(--header-height);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:8px 16px;
+      background:#24292f;
+      color: #fff;
+    }
+    header .left {
+      display:flex;
+      gap:12px;
+      align-items:center;
+    }
+    header h1{ font-size:16px; margin:0; font-weight:600; }
+    header .controls { display:flex; gap:8px; align-items:center; }
+    header button, header input[type="text"], header input[type="file"]{
+      border: none;
+      padding:8px 10px;
+      border-radius:6px;
+      font-size:13px;
+    }
+    header button{ background:#2ea44f; color:white; cursor:pointer; }
+    header button.secondary{ background:#0366d6; }
+    header input[type="text"]{ min-width:220px; }
+    main {
+      display:flex;
+      height: calc(100% - var(--header-height));
+    }
+    /* left editor and right preview split */
+    .pane {
+      width:50%;
+      height:100%;
+      overflow:auto;
+      box-sizing:border-box;
+      padding:12px;
+    }
+    .editor {
+      background:#0b1220;
+      color:#e6edf3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+      font-size:14px;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+    .editor textarea{
+      flex:1;
+      width:100%;
+      min-height:0;
+      resize:none;
+      padding:12px;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(180deg,#071021,#0b1220);
+      color: #e6edf3;
+      outline:none;
+    }
+    .editor .meta { display:flex; gap:8px; align-items:center; }
+    .preview {
+      background: #ffffff;
+      padding: 24px;
+      overflow:auto;
+      border-left:1px solid #e1e4e8;
+      box-sizing:border-box;
+    }
+    /* apply GitHub markdown styles to inner content */
+    .markdown-body {
+      box-sizing: border-box;
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    /* small responsive tweaks */
+    @media (max-width:900px){
+      main{ flex-direction:column; }
+      .pane{ width:100%; height:50%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="left">
+      <h1>README Viewer</h1>
+      <div style="opacity:.85; font-size:13px;">(vasak: editor • parem: preview)</div>
+    </div>
+
+    <div class="controls">
+      <input id="githubUrl" type="text" placeholder="Sisesta raw GitHub URL (nt https://raw.githubusercontent.com/user/repo/branch/README.md)" />
+      <button id="loadGithub" class="secondary">Laadi GitHubist</button>
+      <input id="fileInput" type="file" accept=".md,text/markdown,text/plain" />
+      <button id="downloadPdf">Download as PDF</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="pane editor">
+      <div class="meta" style="justify-content:space-between;">
+        <div style="font-size:13px; opacity:.9;">Markdown editor</div>
+        <div style="font-size:13px; opacity:.8;">Live preview memory: localStorage</div>
+      </div>
+      <textarea id="mdInput" spellcheck="false" placeholder="# Tere — kleebi või laadi README.md siia..."></textarea>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button id="clearBtn" style="background:#d73a49;color:#fff;">Clear</button>
+        <button id="loadExample">Laadi näide</button>
+      </div>
+    </section>
+
+    <aside class="pane preview">
+      <div id="preview" class="markdown-body"></div>
+    </aside>
+  </main>
+
+  <script>
+    // Configure marked
+    marked.setOptions({
+      gfm: true,
+      breaks: false,
+      headerIds: true,
+      mangle: false, // avoid email obfuscation
+      highlight: function(code, lang){
+        try {
+          if(lang && hljs.getLanguage(lang)){
+            return hljs.highlight(code, {language: lang}).value;
+          } else {
+            return hljs.highlightAuto(code).value;
+          }
+        } catch(e){
+          return code;
+        }
+      }
+    });
+
+    const mdInput = document.getElementById('mdInput');
+    const preview = document.getElementById('preview');
+    const githubUrlInput = document.getElementById('githubUrl');
+    const loadGithubBtn = document.getElementById('loadGithub');
+    const fileInput = document.getElementById('fileInput');
+    const downloadPdfBtn = document.getElementById('downloadPdf');
+    const clearBtn = document.getElementById('clearBtn');
+    const loadExampleBtn = document.getElementById('loadExample');
+
+    // Render function
+    function renderMarkdown(){
+      const raw = mdInput.value || '';
+      // Convert markdown -> HTML
+      const html = marked.parse(raw);
+      // sanitize
+      const safe = DOMPurify.sanitize(html, {ADD_ATTR: ['target']});
+      // insert and then highlight code blocks (marked already highlighted, but ensure)
+      preview.innerHTML = safe;
+      // ensure code blocks are highlighted
+      preview.querySelectorAll('pre code').forEach((block) => {
+        try{ hljs.highlightElement(block); } catch(e){}
+      });
+      // save to localStorage
+      try{ localStorage.setItem('md_preview_content', raw); } catch(e){}
+    }
+
+    // Live render on input (debounced)
+    let timer;
+    mdInput.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(renderMarkdown, 250);
+    });
+
+    // Load from localStorage if exists
+    const saved = localStorage.getItem('md_preview_content');
+    if(saved){ mdInput.value = saved; renderMarkdown(); } else {
+      // optional: initial sample
+      mdInput.value = "# Tere!\n\nSee on näide README-st — klõpsa **Download as PDF** et salvestada PDF.\n\n```js\nconsole.log('hello world');\n```\n\n- [ ] task list\n- [x] completed\n\n| Tabel | Näide |\n|---|---|\n| rida | 1 |\n\n![GitHub Octocat](https://github.githubassets.com/images/modules/logos_page/Octocat.png)\n";
+      renderMarkdown();
+    }
+
+    // Load from GitHub raw URL
+    loadGithubBtn.addEventListener('click', async () => {
+      const url = githubUrlInput.value.trim();
+      if(!url){ alert('Sisesta raw GitHub URL'); return; }
+      try {
+        const res = await fetch(url);
+        if(!res.ok) throw new Error('Laadimine ebaõnnestus: ' + res.status);
+        const text = await res.text();
+        mdInput.value = text;
+        renderMarkdown();
+      } catch (err) {
+        alert('Viga: ' + err.message + '\nVeendu, et kasutad raw.githubusercontent.com url-i ja fail on avalik.');
+      }
+    });
+
+    // Load local file
+    fileInput.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if(!f) return;
+      const reader = new FileReader();
+      reader.onload = function(ev){
+        mdInput.value = ev.target.result;
+        renderMarkdown();
+      };
+      reader.readAsText(f);
+    });
+
+    // Clear editor
+    clearBtn.addEventListener('click', ()=>{
+      if(confirm('Tõesti kustutada sisu?')) {
+        mdInput.value = '';
+        renderMarkdown();
+      }
+    });
+
+    // Load example
+    loadExampleBtn.addEventListener('click', ()=>{
+      mdInput.value = `# Näidis README\n\nSee on demo, mis illustreerib GitHub-flavored README.\n\n## Koodinäide\n\n\`\`\`python\ndef tervitus():\n    print('Tere maailm')\n\ntervitus()\n\`\`\`\n\n## Tabel\n\n| Nimi | Väärtus |\n|---|---|\n| X | 1 |\n| Y | 2 |\n\n## Pilt\n\n![Näide](https://github.githubassets.com/images/modules/logos_page/Octocat.png)\n\nLõpp.`;
+      renderMarkdown();
+    });
+
+    // Download as PDF
+    downloadPdfBtn.addEventListener('click', async () => {
+      // Before converting, we might want to ensure images are loaded and math rendered (if any)
+      // Optionally allow filename
+      const filename = 'README.pdf';
+
+      // Create a clone of preview to tweak for PDF (to add margins, max-width etc)
+      const clone = preview.cloneNode(true);
+      // Wrap in a container with markdown-body class to keep GitHub styles
+      const container = document.createElement('div');
+      container.className = 'markdown-body';
+      // optional: add inline styles to ensure proper PDF width
+      container.style.boxSizing = 'border-box';
+      container.style.padding = '24px';
+      container.appendChild(clone);
+
+      // Append to body off-screen (so images/styles apply)
+      container.style.position = 'fixed';
+      container.style.left = '-10000px';
+      document.body.appendChild(container);
+
+      // Wait for images to load (simple approach)
+      await Promise.all(Array.from(container.querySelectorAll('img')).map(img=>{
+        if(img.complete) return Promise.resolve();
+        return new Promise((res)=>{ img.onload = img.onerror = res; });
+      }));
+
+      // html2pdf options — adjust for quality
+      const opt = {
+        margin:       12,            // mm
+        filename:     filename,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2, useCORS: true, logging: false, allowTaint: false },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] }
+      };
+
+      try {
+        await html2pdf().set(opt).from(container).save();
+      } catch(err){
+        alert('PDF genereerimisel tekkis viga: ' + err.message);
+      } finally {
+        // cleanup
+        document.body.removeChild(container);
+      }
+    });
+  </script>
+</body>
+</html>
